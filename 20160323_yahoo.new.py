@@ -10,71 +10,39 @@ import metric_learn
 #import copy
 #import numpy as np
 
+
 def classification(cur_label, train_vectors, train_labels, test_vectors, estimate_labels, ignore_indexes):
     CLASSIFIER.fit(train_vectors, train_labels)
-    estimate_labels_cur = CLASSIFIER.predict(test_vectors)
-    for i in range(len(estimate_labels_cur)):
+    estimate_all_labels = CLASSIFIER.predict(test_vectors)
+    n_true = n_estimated = n_right = 0.0
+    for i in range(len(estimate_all_labels)):
+        if TEST_LABELS[i] == cur_label:#正确的Label跟判没判断过无关，所以不像下面一样忽略掉
+            n_true += 1
         if not ignore_indexes[i]:#忽略已经判断好了的test数据
-            if estimate_labels_cur[i] == cur_label:
+            if estimate_all_labels[i] == cur_label:
+                n_estimated += 1
                 estimate_labels[i] = cur_label
                 ignore_indexes[i] = True
+            if estimate_all_labels[i] == cur_label and TEST_LABELS[i] == cur_label:
+                n_right += 1
+    #compute_presion_recall_F
+    if n_right != 0: 
+        presion = n_right/n_estimated
+        recall = n_right/n_true
+        F = 2*presion*recall/(presion + recall)
+    else: 
+        presion = recall = F = 0.0
+    return (presion, recall, F)
     
 def compute_accuracy(estimate_labels):
-    #初始化
-    n_right = {}
-    n_estimated = {}
-    n_true = {}
-    for label in ORDER_LABELS:
-        n_right[label] = 0.0
-        n_estimated[label] = 0.0
-        n_true[label] = 0.0
-    del label
-    #统计    
-    n_right_all = 0.0
+    n_right = 0.0
     for i in range(len(estimate_labels)):
-        n_estimated[estimate_labels[i]] += 1
-        n_true[TEST_LABELS[i]] += 1
         if estimate_labels[i] == TEST_LABELS[i]:
-            n_right[estimate_labels[i]] += 1
-            n_right_all += 1
-    del i    
-     #计算       
-    presion = {}
-    recall = {}
-    F = {}      
-    for label in ORDER_LABELS:
-        if n_right[label] != 0: 
-            presion[label] = n_right[label]/n_estimated[label]
-            recall[label] = n_right[label]/n_true[label]
-            F[label] = 2*presion[label]*recall[label]/(presion[label] + recall[label])
-        else: 
-            presion[label] = recall[label] = F[label] = 0.0
-    del label
-    return (presion, recall, F, n_right_all/len(estimate_labels))
-
-def printout(method, presion, recall, F, accuracy):
-    print('Accuracy %s: %f.' %(method, accuracy))
-    for label in ORDER_LABELS:
-        print("Presion: %f, Recall: %f, F: %f." %(presion[label], recall[label], F[label]))
-    del label
-    
-def printfile(method, labels):
-    file = open('labels_%s.csv' %(method), 'w')
-    file.write("index,label\n")
-    for i in range(len(labels)):
-        file.write('%d,%s\n' %(i, labels[i]))
-    del i
-    file.close()
-
-def supplementLastLabel(estimated_labels):
-    for i in range(len(estimated_labels)):
-        if estimated_labels[i] == '':
-            estimated_labels[i] = ORDER_LABELS[-1]
-    del i
+            n_right += 1
+    return n_right/len(estimate_labels)
 
 #Parameters
 START_DATE = 20151101
-NUM_DATA = 16345
 SVD_DIM = 100
 N_NEIGHBORS = 3
 ORDER_LABELS = ['スポーツ','エンタメ','国際','国内','経済','地域','ライフ','IT・科学']
@@ -96,8 +64,9 @@ del i, train_label_file, test_label_file, train_svdvector_file, test_svdvector_f
 print('Writing svd files done in %fs.' % (time.time() - t) + '[' + time.strftime('%H:%M:%S') + ']')
 
 
-#test的LABEL不需要每次都重新读取
+#test不需要每次都重新读取
 TEST_LABELS = pandas.read_table('%s%s/test1.info' %(PATH, START_DATE), sep='\t', header=None, usecols=[1]).as_matrix().flatten()
+test_vectors = pandas.read_table('%s%s/test1.info.svd' %(PATH, START_DATE), sep=' ', header=None).as_matrix()#因为用lmnn时会变，所以与TEST_LABELS不同，不用作全局变量
 CLASSIFIER = neighbors.KNeighborsClassifier(n_neighbors=N_NEIGHBORS)
 
 #记录结果
@@ -105,16 +74,16 @@ presion_withoutlmnn = {}
 recall_withoutlmnn = {}
 F_withoutlmnn = {}
 #陆续加
-estimate_labels_withoutlmnn = ['' for i in range(NUM_DATA)]
-ignore_indexes_withoutlmnn = [False for i in range(NUM_DATA)]
+estimate_labels_withoutlmnn = ['' for i in range(len(TEST_LABELS))]
+ignore_indexes_withoutlmnn = [False for i in range(len(TEST_LABELS))]
 
 #记录结果
 presion_withlmnn = {}
 recall_withlmnn = {}
 F_withlmnn = {}
 #陆续加
-estimate_labels_withlmnn = ['' for i in range(NUM_DATA)]
-ignore_indexes_withlmnn = [False for i in range(NUM_DATA)]
+estimate_labels_withlmnn = ['' for i in range(len(TEST_LABELS))]
+ignore_indexes_withlmnn = [False for i in range(len(TEST_LABELS))]
 
 # classify
 for i in range(len(ORDER_LABELS) - 1):
@@ -122,32 +91,27 @@ for i in range(len(ORDER_LABELS) - 1):
     print('Classyfing label %s (step %d/%d)...' %(cur_label, i + 1, (len(ORDER_LABELS) - 1)))
     train_vectors = pandas.read_table('%s%s/train%d.info.svd' %(PATH, START_DATE, i + 1), sep=' ', header=None).as_matrix()
     train_labels = pandas.read_table('%s%s/train%d.info' %(PATH, START_DATE, i + 1), sep='\t', header=None, usecols=[1]).as_matrix().flatten()
-    #test的VECTOR需要每次都重新读取
-    test_vectors = pandas.read_table('%s%s/test%d.info.svd' %(PATH, START_DATE, i + 1), sep=' ', header=None).as_matrix()
+
     #without lmnn
     t = time.time()
     print('SVD...')
-    classification(cur_label, train_vectors, train_labels, test_vectors, estimate_labels_withoutlmnn, ignore_indexes_withoutlmnn)
+    (presion_withoutlmnn[cur_label], recall_withoutlmnn[cur_label], F_withoutlmnn[cur_label]) = \
+        classification(cur_label, train_vectors, train_labels, test_vectors, estimate_labels_withoutlmnn, ignore_indexes_withoutlmnn)
+    print("Presion: %f, Recall: %f, F: %f." %(presion_withoutlmnn[cur_label], recall_withoutlmnn[cur_label], F_withoutlmnn[cur_label]))
     print("\tdone in %fs." % (time.time() - t) + '[' + time.strftime('%H:%M:%S') + ']')
     
     #with lmnn (too slow to run)
 #    t = time.time()
-#    print('SVD + lmnn...')
+#    print('SVD + lmnn...' %(i + 1, (len(ORDER_LABELS) - 1)))
 #    lmnn = metric_learn.LMNN(k=N_NEIGHBORS).fit(train_vectors, train_labels)
-#    classification(cur_label, lmnn.transform(train_vectors), train_labels, lmnn.transform(test_vectors), estimate_labels_withlmnn, ignore_indexes_withlmnn)
+#    (presion_withlmnn[cur_label], recall_withlmnn[cur_label], F_withlmnn[cur_label]) = \
+#        classification(cur_label, lmnn.transform(train_vectors), train_labels, lmnn.transform(test_vectors), estimate_labels_withlmnn, ignore_indexes_withlmnn)
+#    print("Presion: %f, Recall: %f, F: %f." %(presion_withlmnn[cur_label], recall_withlmnn[cur_label], F_withlmnn[cur_label]))
 #    print("\tdone in %fs." % (time.time() - t) + '[' + time.strftime('%H:%M:%S') + ']')
-    
-    print()
+#    print()
 del i
 
-#supplement the last label
-supplementLastLabel(estimate_labels_withoutlmnn)
-supplementLastLabel(estimate_labels_withlmnn)
-
-printfile('estimated_withoutlmnn', estimate_labels_withoutlmnn)
-printfile('estimated_withlmnn', estimate_labels_withlmnn)
-printfile('true', TEST_LABELS)
-(presion_withoutlmnn, recall_withoutlmnn, F_withoutlmnn, accuracy_withoutlmnn) = compute_accuracy(estimate_labels_withoutlmnn)
-(presion_withlmnn, recall_withlmnn, F_withlmnn, accuracy_withlmnn) = compute_accuracy(estimate_labels_withlmnn)
-printout('without lmnn', presion_withoutlmnn, recall_withoutlmnn, F_withoutlmnn, accuracy_withoutlmnn)
-printout('with lmnn', presion_withlmnn, recall_withlmnn, F_withlmnn, accuracy_withlmnn)
+accuracy_withoutlmnn = compute_accuracy(estimate_labels_withoutlmnn)
+accuracy_withlmnn = compute_accuracy(estimate_labels_withlmnn)
+print('Accuracy without lmnn: %f.' %accuracy_withoutlmnn)
+print('Accuracy with lmnn: %f.' %accuracy_withlmnn)
